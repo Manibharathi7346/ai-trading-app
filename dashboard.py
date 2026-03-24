@@ -13,13 +13,16 @@ data = []
 
 for s in stocks:
     df = yf.download(s, period="1d", interval="1m")
-    price = df['Close'].iloc[-1]
-    change = df['Close'].pct_change().iloc[-1] * 100
+
+    if df.empty:
+        continue
+
+    price = float(df['Close'].iloc[-1])
+    change = float(df['Close'].pct_change().iloc[-1] * 100)
 
     signal = "BUY" if change > 0 else "SELL"
 
     data.append([s.replace(".NS",""), round(price,2), round(change,2), signal])
-
 df = pd.DataFrame(data, columns=["Stock","Price","Change %","Signal"])
 
 st.dataframe(df)
