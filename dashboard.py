@@ -41,7 +41,7 @@ for s in stocks:
     if df is None or df.empty:
         continue
 
-    price = float(df['Close'].iloc[-1])
+    price = float(df['Close'].values[-1])
     change = float(df['Close'].pct_change().iloc[-1] * 100)
 
     signal = "BUY" if change > 0 else "SELL"
