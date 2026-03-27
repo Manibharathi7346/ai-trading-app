@@ -11,7 +11,7 @@ st.set_page_config(page_title="AI Trading Terminal", layout="wide")
 st.title("🤖 AI Trading Terminal")
 
 # ======================
-# HELPER FUNCTION (VERY IMPORTANT)
+# HELPER FUNCTION
 # ======================
 def get_safe_last(series):
     try:
@@ -28,18 +28,22 @@ def get_safe_last(series):
 stocks = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 
 # ======================
-# MARKET TREND
+# MARKET TREND (FIXED)
 # ======================
 nifty = yf.download("NIFTY50.NS", period="5d", progress=False)
 
 if nifty is not None and not nifty.empty and 'Close' in nifty.columns:
     trend_series = nifty['Close'].pct_change().dropna()
+
     if not trend_series.empty:
-        trend = trend_series.iloc[-1]
+        trend = trend_series.iloc[-1]   # ✅ FIX
+
         if trend > 0:
             st.success("📈 Market Positive")
         else:
             st.error("📉 Market Weak")
+    else:
+        st.warning("No trend data available")
 else:
     st.warning("⚠️ Unable to fetch market trend")
 
@@ -109,7 +113,6 @@ for s in stocks:
         if len(df) < 20:
             continue
 
-        # Indicators
         df['MA20'] = df['Close'].rolling(20).mean()
 
         delta = df['Close'].diff()
