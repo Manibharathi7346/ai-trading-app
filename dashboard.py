@@ -3,17 +3,36 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 import plotly.express as px
-import json
+import numpy as np
+from sklearn.linear_model import LinearRegression
 
+# ======================
+# PAGE CONFIG
+# ======================
 st.set_page_config(page_title="AI Trading Terminal", layout="wide")
 
-st.title("🤖 AI Trading Terminal")
+# ======================
+# PREMIUM UI STYLE
+# ======================
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 2rem;
+}
+[data-testid="stMetric"] {
+    background-color: #111827;
+    padding: 15px;
+    border-radius: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🤖 AI Trading + Wealth Dashboard")
 
 # ======================
 # TOP SUMMARY (FINBOOM STYLE)
 # ======================
 col1, col2, col3 = st.columns(3)
-
 col1.metric("💰 Net Worth", "₹2.5L", "+5%")
 col2.metric("📊 Assets", "₹3.0L")
 col3.metric("💳 Liabilities", "₹50K")
@@ -32,117 +51,195 @@ fig_alloc = px.pie(alloc, names='Category', values='Value')
 st.plotly_chart(fig_alloc, use_container_width=True)
 
 # ======================
-# GOALS
-# ======================
-st.subheader("🎯 Goals")
-
-st.progress(0.7, text="Emergency Fund 70%")
-st.progress(0.4, text="Retirement 40%")
-
-# ======================
 # STOCK LIST
 # ======================
-stocks = ["RELIANCE.NS", "TCS.NS", "INFY.NS"]
+stocks = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
+
+stock = st.selectbox("📌 Select Stock", stocks)
 
 # ======================
-# MARKET TREND
+# LOAD DATA (STABLE)
 # ======================
-nifty = yf.download("NIFTY50.NS", period="5d", progress=False)
+df = yf.download(stock, period="1mo", interval="5m", progress=False, threads=False)
 
-if not nifty.empty and 'Close' in nifty.columns:
-    trend = nifty['Close'].pct_change().dropna()
+if df is None or df.empty or 'Close' not in df.columns:
+    st.error("❌ Unable to fetch data")
+    st.stop()
 
-    if not trend.empty:
-        if trend.iloc[-1] > 0:
-            st.success("📈 Market Positive")
-        else:
-            st.error("📉 Market Weak")
+df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+df.dropna(inplace=True)
+
+# ======================
+# INDICATORS
+# ======================
+df['MA20'] = df['Close'].rolling(20).mean()
+
+delta = df['Close'].diff()
+gain = delta.clip(lower=0).rolling(14).mean()
+loss = (-delta.clip(upper=0)).rolling(14).mean()
+rs = gain / loss
+df['RSI'] = 100 - (100 / (1 + rs))
+
+df.dropna(inplace=True)
+
+# ======================
+# TRADE DECISION
+# ======================
+st.subheader("🎯 Trade Decision")
+
+latest_price = df['Close'].iloc[-1]
+latest_ma = df['MA20'].iloc[-1]
+latest_rsi = df['RSI'].iloc[-1]
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Price", round(latest_price, 2))
+col2.metric("MA20", round(latest_ma, 2))
+col3.metric("RSI", round(latest_rsi, 2))
+
+signal = "HOLD"
+
+if latest_price > latest_ma and latest_rsi < 40:
+    signal = "BUY"
+    st.success("🟢 STRONG BUY")
+elif latest_price < latest_ma and latest_rsi > 60:
+    signal = "SELL"
+    st.error("🔴 STRONG SELL")
 else:
-    st.warning("Unable to fetch market trend")
+    st.warning("🟡 HOLD")
 
 # ======================
-# LIVE MARKET
+# BACKTESTING
 # ======================
-st.subheader("📊 Live Market")
+st.subheader("📊 Strategy Backtesting")
 
-data = []
+position = 0
+entry_price = 0
+profits = []
+wins = 0
+trades = 0
 
-for s in stocks:
-    try:
-        df = yf.download(s, period="1d", interval="1m", progress=False)
+for i in range(20, len(df)):
+    price = df['Close'].iloc[i]
+    ma = df['MA20'].iloc[i]
+    rsi = df['RSI'].iloc[i]
 
-        if df.empty or 'Close' not in df.columns:
-            continue
+    if position == 0 and price > ma and rsi < 40:
+        position = 1
+        entry_price = price
 
-        close = pd.to_numeric(df['Close'], errors='coerce').dropna()
+    elif position == 1 and price < ma and rsi > 60:
+        profit = price - entry_price
+        profits.append(profit)
 
-        if close.empty:
-            continue
+        trades += 1
+        if profit > 0:
+            wins += 1
 
-        price = float(close.iloc[-1])
-        change = float(close.pct_change().iloc[-1] * 100)
+        position = 0
 
-        signal = "BUY" if change > 0 else "SELL"
+# close open trade
+if position == 1:
+    profit = df['Close'].iloc[-1] - entry_price
+    profits.append(profit)
+    trades += 1
+    if profit > 0:
+        wins += 1
 
-        data.append([s.replace(".NS",""), round(price,2), round(change,2), signal])
+total_profit = sum(profits)
+win_rate = (wins / trades * 100) if trades > 0 else 0
 
-    except:
-        continue
+col1, col2, col3 = st.columns(3)
+col1.metric("💰 Total Profit", f"₹{round(total_profit,2)}")
+col2.metric("📊 Trades", trades)
+col3.metric("🎯 Win Rate", f"{round(win_rate,2)}%")
 
-df_live = pd.DataFrame(data, columns=["Stock","Price","Change %","Signal"])
+# ======================
+# ADVANCED AI PREDICTION
+# ======================
+st.subheader("🤖 AI Prediction")
 
-if not df_live.empty:
-    st.dataframe(df_live, use_container_width=True)
+df_ai = df.copy()
+df_ai['Target'] = df_ai['Close'].shift(-1)
+df_ai.dropna(inplace=True)
+
+X = df_ai[['Close', 'MA20', 'RSI']]
+y = df_ai['Target']
+
+model = LinearRegression()
+model.fit(X, y)
+
+last_row = df_ai.iloc[-1]
+input_data = [[last_row['Close'], last_row['MA20'], last_row['RSI']]]
+
+predicted_price = model.predict(input_data)[0]
+current_price = last_row['Close']
+
+confidence = abs(predicted_price - current_price) / current_price * 100
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Current Price", round(current_price, 2))
+col2.metric("Predicted Price", round(predicted_price, 2))
+col3.metric("Confidence", f"{round(confidence,2)}%")
+
+if predicted_price > current_price:
+    st.success("🟢 AI: Market likely UP")
 else:
-    st.warning("No live data available")
+    st.error("🔴 AI: Market likely DOWN")
 
 # ======================
-# SMART CHART (FIXED)
+# AI ACCURACY
 # ======================
-st.subheader("📈 Smart Chart")
+st.subheader("📊 AI Accuracy")
 
-stock = st.selectbox("Select Stock", stocks)
+correct = 0
+wrong = 0
 
-chart = yf.download(stock, period="5d", interval="15m", progress=False)
+for i in range(len(df_ai) - 1):
+    row = df_ai.iloc[i]
+    next_price = df_ai['Close'].iloc[i+1]
 
-if isinstance(chart, pd.DataFrame) and not chart.empty and 'Close' in chart.columns:
+    pred = model.predict([[row['Close'], row['MA20'], row['RSI']]])[0]
 
-    chart = chart.copy()
-
-    chart['Close'] = chart['Close'].astype(float)
-
-    if len(chart) > 20:
-
-        chart['MA20'] = chart['Close'].rolling(20).mean()
-
-        fig = go.Figure()
-
-        fig.add_trace(go.Candlestick(
-            x=chart.index,
-            open=chart['Open'],
-            high=chart['High'],
-            low=chart['Low'],
-            close=chart['Close']
-        ))
-
-        fig.add_trace(go.Scatter(
-            x=chart.index,
-            y=chart['MA20'],
-            line=dict(color='yellow'),
-            name="MA20"
-        ))
-
-        fig.update_layout(template="plotly_dark")
-
-        st.plotly_chart(fig, use_container_width=True)
-
+    if (pred > row['Close'] and next_price > row['Close']) or \
+       (pred < row['Close'] and next_price < row['Close']):
+        correct += 1
     else:
-        st.warning("Not enough data")
+        wrong += 1
 
-else:
-    st.warning("Chart data unavailable")
+total = correct + wrong
+accuracy = (correct / total * 100) if total > 0 else 0
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Accuracy", f"{round(accuracy,2)}%")
+col2.metric("Correct", correct)
+col3.metric("Wrong", wrong)
 
 # ======================
-# FOOTER
+# CHART
 # ======================
-st.caption("🚀 AI Trading + Wealth Dashboard")
+st.subheader("📈 Price Chart")
+
+fig = go.Figure()
+
+fig.add_trace(go.Candlestick(
+    x=df.index,
+    open=df['Open'],
+    high=df['High'],
+    low=df['Low'],
+    close=df['Close']
+))
+
+fig.add_trace(go.Scatter(
+    x=df.index,
+    y=df['MA20'],
+    name="MA20"
+))
+
+fig.update_layout(template="plotly_dark")
+
+st.plotly_chart(fig, use_container_width=True)
+
+# ======================
+# FINAL FOOTER
+# ======================
+st.caption("🚀 AI Trading System • Premium Version")
